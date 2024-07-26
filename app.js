@@ -8,7 +8,8 @@ const methodOverride = require('method-override');
 const ejsMate = require('ejs-mate');
 const wrapAsync = require('./utils/wrapAsync.js');
 const ExpressError = require('./utils/ExpressError.js');
-const listingSchema = require('./schema.js');
+const { listingSchema, reviewSchema } = require('./schema.js');
+const Review = require('./models/reviews.js');
 
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "/views"));
@@ -45,6 +46,17 @@ const validateListing = function (req, res, next) {
     }
 }
 
+const validateReview = function (req, res, next) {
+    let { error } = reviewSchema.validate(req.body);
+    if (error) {
+        let errMessage = error.details.map((el) => el.message).join(",");
+        throw new ExpressError(400, errMessage);
+    }
+    else {
+        next();
+    }
+}
+
 // Index Route
 app.get("/listings", wrapAsync(async (req, res) => {
     let allListings = await Listing.find({});
@@ -60,7 +72,7 @@ app.get("/listings/new", (req, res) => {
 // Show Route
 app.get("/listings/:id", wrapAsync(async (req, res) => {
     let { id } = req.params;
-    let listing = await Listing.findById(id);
+    let listing = await Listing.findById(id).populate("reviews");
     res.render("./listings/show.ejs", { listing });
 }));
 
@@ -102,24 +114,29 @@ app.delete("/listings/:id", wrapAsync(async (req, res) => {
     let { id } = req.params;
     await Listing.findByIdAndDelete(id);
     res.redirect("/listings");
-}))
+}));
+
+// Reviews
+app.post("/listings/:id/reviews", validateReview, wrapAsync(async (req, res) => {
+    let { id } = req.params;
+    let newReview = new Review(req.body.review);
+    await newReview.save();
+    await Listing.findByIdAndUpdate(id, { $push: { reviews: newReview } });
+    res.redirect(`/listings/${id}`);
+}));
+
+// Delete Review
+app.delete("/listings/:id/reviews/:reviewId", wrapAsync(async (req, res) => {
+    let { id, reviewId } = req.params;
+    await Listing.findByIdAndUpdate(id, { $pull: { reviews: reviewId } });
+    await Review.findByIdAndDelete(reviewId);
+
+    res.redirect(`/listings/${id}`);
+}));
 
 app.get("/", (req, res) => {
     res.redirect("/listings");
 });
-
-// app.get("/testlisting", (req, res) => {
-//     let user1 = new Listing({
-//         title: "My home",
-//         description: "Near beach",
-//         price: "1000",
-//         location: "Goa",
-//         country: "India",
-//     });
-//     user1.save();
-//     console.log("data saved");
-//     res.send("");
-// });
 
 app.all("*", (req, res, next) => {
     next(new ExpressError(404, "Page not found!"));
